@@ -149,52 +149,156 @@ const doInsertItem = async (
   webContents.send('log', 'set description');
   await delay(ACTION_TIMEOUT);
 
-  // --- CONDITION ---
-  // Based on actual page HTML: hidden input name="itemCondition", click the wrapper div then pick from listbox
-  const clickDropdownByInputName = async (inputName: string, optionValue: string, label: string) => {
-    // Click the visible dropdown container (sibling/ancestor of the hidden input)
-    const dropdownContainer = await puppeteerPage.$(
-      `::-p-xpath(//input[@name="${inputName}"]/following-sibling::div | //input[@name="${inputName}"]/../div[@tabindex])`
-    ) || await puppeteerPage.$(
-      `::-p-xpath(//input[@name="${inputName}"]/parent::div/parent::div)`
-    );
+  // --- CAMPI SPECIFICI PER CATEGORIA ---
+  const isMotori = ['2', '3', '4', '5', '22', '34', '36'].includes(item.category);
 
-    if (dropdownContainer) {
-      await dropdownContainer.click();
-    } else {
-      // fallback: find by placeholder text in the section
-      const placeholderDiv = await puppeteerPage.$(
-        `::-p-xpath(//section[.//input[@name="${inputName}"]]//div[@tabindex="0"])`
+  if (!isMotori) {
+    // --- CONDITION (solo per Informatica e simili) ---
+    const clickDropdownByInputName = async (inputName: string, optionValue: string, label: string) => {
+      const dropdownContainer = await puppeteerPage.$(
+        `::-p-xpath(//input[@name="${inputName}"]/following-sibling::div | //input[@name="${inputName}"]/../div[@tabindex])`
+      ) || await puppeteerPage.$(
+        `::-p-xpath(//input[@name="${inputName}"]/parent::div/parent::div)`
       );
-      await placeholderDiv?.click();
+      if (dropdownContainer) {
+        await dropdownContainer.click();
+      } else {
+        const placeholderDiv = await puppeteerPage.$(
+          `::-p-xpath(//section[.//input[@name="${inputName}"]]//div[@tabindex="0"])`
+        );
+        await placeholderDiv?.click();
+      }
+      await delay(ACTION_TIMEOUT);
+      const option = await puppeteerPage.$(`#${inputName}__option--${optionValue}`) ||
+        await puppeteerPage.$(`[id="${inputName}__option--${optionValue}"]`) ||
+        await puppeteerPage.$(`::-p-xpath(//ul[@role="listbox"]//li[@data-value="${optionValue}"])`);
+      if (option) {
+        await option.click();
+        webContents.send('log', `set ${label}`);
+      } else {
+        webContents.send('log', `ERROR: option ${optionValue} not found for ${label}`);
+      }
+      await delay(ACTION_TIMEOUT);
+    };
+
+    if (item.condition) {
+      await clickDropdownByInputName('itemCondition', item.condition, 'condition');
     }
-    await delay(ACTION_TIMEOUT);
 
-    // Pick the option from the open listbox
-    const option = await puppeteerPage.$(`#${inputName}__option--${optionValue}`) ||
-      await puppeteerPage.$(`[id="${inputName}__option--${optionValue}"]`) ||
-      await puppeteerPage.$(`::-p-xpath(//ul[@role="listbox"]//li[@data-value="${optionValue}"])`);
-
-    if (option) {
-      await option.click();
-      webContents.send('log', `set ${label}`);
-    } else {
-      webContents.send('log', `ERROR: option ${optionValue} not found for ${label}`);
+    if (item.type) {
+      let typeInputName = 'computerType';
+      switch (item.category) {
+        case '10': typeInputName = 'computerType'; break;
+        case '11': typeInputName = 'audioVideoType'; break;
+        case '12': typeInputName = 'phoneType'; break;
+      }
+      await clickDropdownByInputName(typeInputName, item.type, 'type');
     }
-    await delay(ACTION_TIMEOUT);
-  };
-
-  await clickDropdownByInputName('itemCondition', item.condition, 'condition');
-
-  // --- TYPE (optional, category-specific) ---
-  if (item.type) {
-    let typeInputName = 'computerType';
-    switch (item.category) {
-      case '10': typeInputName = 'computerType'; break;
-      case '11': typeInputName = 'audioVideoType'; break;
-      case '12': typeInputName = 'phoneType'; break;
+  } else {
+    // --- MOTORI: Marca, Chilometraggio, Anno, Mese ---
+    if (item.brand) {
+      const brandInput = await puppeteerPage.$('#react-select-2-input');
+      await brandInput?.click();
+      await delay(500);
+      await brandInput?.type(item.brand);
+      await delay(1000);
+      const brandOption = await puppeteerPage.waitForSelector(
+        '[class*="option__"]', { timeout: 5000 }
+      ).catch(() => null);
+      if (brandOption) {
+        await brandOption.click();
+        webContents.send('log', 'set brand');
+      } else {
+        webContents.send('log', 'ERROR: brand option not found');
+      }
+      await delay(ACTION_TIMEOUT);
     }
-    await clickDropdownByInputName(typeInputName, item.type, 'type');
+
+    if (item.model) {
+      // Il react-select del modello appare dopo aver selezionato la marca
+      const modelInput = await puppeteerPage.waitForSelector(
+        '#react-select-12-input', { timeout: 5000 }
+      ).catch(() => null);
+      await modelInput?.click();
+      await delay(500);
+      await modelInput?.type(item.model);
+      await delay(1000);
+      const modelOption = await puppeteerPage.waitForSelector(
+        '[class*="option__"]', { timeout: 5000 }
+      ).catch(() => null);
+      if (modelOption) {
+        await modelOption.click();
+        webContents.send('log', 'set model');
+      } else {
+        webContents.send('log', 'ERROR: model option not found');
+      }
+      await delay(ACTION_TIMEOUT);
+    }
+    if (item.trim) {
+      const trimInput = await puppeteerPage.waitForSelector(
+        '#react-select-13-input', { timeout: 5000 }
+      ).catch(() => null);
+      if (trimInput) {
+        await trimInput.click();
+        await delay(500);
+        await trimInput.type(item.trim);
+        await delay(1000);
+        const trimOption = await puppeteerPage.waitForSelector(
+          '[class*="option__"]', { timeout: 5000 }
+        ).catch(() => null);
+        if (trimOption) {
+          await trimOption.click();
+          webContents.send('log', 'set trim');
+        } else {
+          webContents.send('log', 'WARNING: trim option not found');
+        }
+        await delay(ACTION_TIMEOUT);
+      }
+    }
+    if (item.mileage) {
+      await puppeteerPage.waitForSelector('#mileage', { timeout: 5000 });
+      const mileageInput = await puppeteerPage.$('#mileage');
+      await mileageInput?.click();
+      await mileageInput?.type(item.mileage);
+      webContents.send('log', 'set mileage');
+      await delay(ACTION_TIMEOUT);
+    }
+
+    if (item.year) {
+      const yearInput = await puppeteerPage.$('#react-select-3-input');
+      await yearInput?.click();
+      await delay(500);
+      await yearInput?.type(item.year);
+      await delay(1000);
+      const yearOption = await puppeteerPage.waitForSelector(
+        '[class*="option__"]', { timeout: 5000 }
+      ).catch(() => null);
+      if (yearOption) {
+        await yearOption.click();
+        webContents.send('log', 'set year');
+      } else {
+        webContents.send('log', 'ERROR: year option not found');
+      }
+      await delay(ACTION_TIMEOUT);
+    }
+
+    if (item.month) {
+      const monthInput = await puppeteerPage.$('#react-select-4-input');
+      await monthInput?.click();
+      await delay(500);
+      await monthInput?.type(item.month);
+      await delay(1000);
+      const monthOption = await puppeteerPage.waitForSelector(
+        '[class*="option__"]', { timeout: 5000 }
+      ).catch(() => null);
+      if (monthOption) {
+        await monthOption.click();
+        webContents.send('log', 'set month');
+      } else {
+        webContents.send('log', 'ERROR: month option not found');
+      }
+      await delay(ACTION_TIMEOUT);
+    }
   }
 
   // --- LOCATION ---
